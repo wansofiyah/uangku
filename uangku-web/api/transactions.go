@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/clerk/clerk-sdk-go/v2"
+	"github.com/clerk/clerk-sdk-go/v2/jwt"
 	_ "github.com/lib/pq"
 )
 
@@ -23,13 +25,35 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
+	// 1. Inisialisasi Clerk & Verifikasi Token JWT dari Header Authorization
+	clerk.SetKey(os.Getenv("CLERK_SECRET_KEY"))
+	authHeader := r.Header.Get("Authorization")
+	sessionToken := strings.TrimPrefix(authHeader, "Bearer ")
+
+	if sessionToken == "" {
+		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
+		return
+	}
+
+	claims, err := jwt.Verify(r.Context(), &jwt.VerifyParams{
+		Token: sessionToken,
+	})
+	if err != nil {
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	// ID unik pengguna yang sedang login dari Clerk (contoh: user_2abc123...)
+	userID := claims.Subject
+
+	// 2. Koneksi ke Database Neon PostgreSQL
 	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -37,9 +61,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer db.Close()
 
+	// 3. Eksekusi Query SQL yang sudah difilter khusus untuk userID ini
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query("SELECT id, title, amount, type, category, date FROM transactions ORDER BY date DESC, created_at DESC")
+		rows, err := db.Query(
+			"SELECT id, title, amount, type, category, date FROM transactions WHERE user_id = $1 ORDER BY date DESC, created_at DESC",
+			userID,
+		)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -61,8 +89,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		err := db.QueryRow(
-			"INSERT INTO transactions (title, amount, type, category, date) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-			input.Title, input.Amount, input.Type, input.Category, input.Date,
+			"INSERT INTO transactions (user_id, title, amount, type, category, date) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+			userID, input.Title, input.Amount, input.Type, input.Category, input.Date,
 		).Scan(&input.ID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -74,7 +102,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		parts := strings.Split(r.URL.Path, "/")
 		id := parts[len(parts)-1]
-		_, err := db.Exec("DELETE FROM transactions WHERE id = $1", id)
+		// Tambahkan "AND user_id = $2" agar user tidak bisa menghapus transaksi milik orang lain
+		_, err := db.Exec("DELETE FROM transactions WHERE id = $1 AND user_id = $2", id, userID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
