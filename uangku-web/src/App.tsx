@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { Wallet, ArrowUpCircle, ArrowDownCircle, Trash2, PlusCircle, Lock } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { type Transaction, type TransactionType } from './types';
-import { SignedIn, SignedOut, SignInButton, UserButton, useAuth } from '@clerk/clerk-react';
+import { SignedIn, SignedOut, SignIn, UserButton, useAuth } from '@clerk/react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/transactions';
 const COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#8b5cf6'];
